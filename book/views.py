@@ -6,6 +6,7 @@ from rest_framework.permissions import (
     IsAuthenticated,
     AllowAny,
 )
+from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from book.models import Book
 from book.serializers import BookSerializer, BookListSerializer
@@ -15,6 +16,7 @@ class BookViewSet(viewsets.ModelViewSet):
     queryset = Book.objects.all()
     serializer_class = BookSerializer
     permission_classes = (IsAuthenticated,)
+    authentication_classes = (JWTAuthentication,)
 
     def get_permissions(self):
         if self.action == "list":
