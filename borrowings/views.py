@@ -1,45 +1,54 @@
-from typing import Type
+from django.db import transaction
+from rest_framework import viewsets, mixins, status
+from rest_framework.exceptions import ValidationError
+from rest_framework.response import Response
 
-from django.db.models import QuerySet
-from rest_framework import viewsets, mixins
-from rest_framework.serializers import Serializer
-from rest_framework.permissions import IsAuthenticated
-
-from rest_framework_simplejwt.authentication import JWTAuthentication
-
+from book.models import Book
 from borrowings.models import Borrowing
 from borrowings.serializers import BorrowingSerializer, BorrowingListSerializer
 
 
-class BorrowingListRetrieveView(
-    mixins.RetrieveModelMixin, mixins.ListModelMixin, viewsets.GenericViewSet
+class BorrowingViewSet(
+    mixins.RetrieveModelMixin,
+    mixins.CreateModelMixin,
+    mixins.ListModelMixin,
+    viewsets.GenericViewSet,
 ):
     queryset = Borrowing.objects.all()
     serializer_class = BorrowingSerializer
-    authentication_classes = (JWTAuthentication,)
-    permission_classes = (IsAuthenticated,)
 
-    def get_queryset(self) -> QuerySet:
-        queryset = self.queryset
-        filter_params = self.request.query_params
+    def get_serializer_class(self):
+        if self.action == "create":
+            return BorrowingSerializer
+        return BorrowingListSerializer
 
-        if filter_params:
-            user_id = filter_params.get("user_id")
-            is_active = (
-                True if filter_params.get("is_active") == "True" else False
-            )
+    def create(self, request, *args, **kwargs) -> Response:
+        user = request.user
+        book_id = int(request.data.get("book"))
+        expected_return_date = request.data.get("expected_return_date")
 
-            if user_id:
-                queryset = queryset.filter(user_id=user_id)
+        if not book_id or book_id < 1:
+            raise ValidationError({"message": "Choose a valid book"})
 
-            if is_active is not None:
-                queryset = queryset.filter(
-                    actual_return_date__isnull=is_active
-                )
+        book = Book.objects.get(id=book_id)
+        Borrowing.validate_borrowing(
+            book=book, exception_to_raise=ValidationError
+        )
+        data = {
+            "user": user.id,
+            "book": book_id,
+            "expected_return_date": expected_return_date,
+        }
 
-        return queryset
+        with transaction.atomic():
+            serializer = self.get_serializer(data=data)
+            serializer.is_valid(raise_exception=True)
+            book.inventory -= 1
+            book.save()
+            serializer.validated_data["user"] = user
+            self.perform_create(serializer)
+            headers = self.get_success_headers(serializer.data)
 
-    def get_serializer_class(self) -> Type[Serializer]:
-        if self.action == "list":
-            return BorrowingListSerializer
-        return BorrowingSerializer
+        return Response(
+            serializer.data, status=status.HTTP_201_CREATED, headers=headers
+        )
