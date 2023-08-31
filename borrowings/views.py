@@ -1,4 +1,5 @@
 from django.db import transaction
+from django.db.models import QuerySet
 from rest_framework import viewsets, mixins, status
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
@@ -21,6 +22,32 @@ class BorrowingViewSet(
         if self.action == "create":
             return BorrowingSerializer
         return BorrowingListSerializer
+
+    def get_queryset(self) -> QuerySet:
+        queryset = self.queryset
+
+        if self.action == "list":
+            user_id = self.request.query_params.get("user_id")
+            is_active = (
+                True
+                if self.request.query_params.get("is_active") == "True"
+                else False
+            )
+
+            if user_id:
+                queryset = queryset.filter(user_id=user_id)
+
+            if is_active is not None:
+                if is_active:
+                    queryset = queryset.exclude(
+                        actual_return_date__isnull=False
+                    )
+                else:
+                    queryset = queryset.exclude(
+                        actual_return_date__isnull=True
+                    )
+
+        return queryset
 
     def create(self, request, *args, **kwargs) -> Response:
         user = request.user
