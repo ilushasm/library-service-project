@@ -1,12 +1,20 @@
-from django.db import transaction
+from typing import Type
+
 from django.db.models import QuerySet
 from rest_framework import viewsets, mixins, status
 from rest_framework.exceptions import ValidationError
+from rest_framework.serializers import Serializer
+from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
 
 from book.models import Book
 from borrowings.models import Borrowing
-from borrowings.serializers import BorrowingSerializer, BorrowingListSerializer
+from borrowings.serializers import (
+    BorrowingSerializer,
+    BorrowingListSerializer,
+    BorrowingReturnSerializer,
+)
 
 
 class BorrowingViewSet(
@@ -17,65 +25,76 @@ class BorrowingViewSet(
 ):
     queryset = Borrowing.objects.all()
     serializer_class = BorrowingSerializer
+    permission_classes = (IsAuthenticated,)
 
-    def get_serializer_class(self):
+    def get_serializer_class(self) -> Type[Serializer]:
         if self.action == "create":
             return BorrowingSerializer
+        if self.action == "borrowing_return":
+            return BorrowingReturnSerializer
         return BorrowingListSerializer
 
     def get_queryset(self) -> QuerySet:
         queryset = self.queryset
+        current_user = self.request.user
 
         if self.action == "list":
-            user_id = self.request.query_params.get("user_id")
-            is_active = (
-                True
-                if self.request.query_params.get("is_active") == "True"
-                else False
-            )
-
-            if user_id:
-                queryset = queryset.filter(user_id=user_id)
+            is_active = self.request.query_params.get("is_active")
 
             if is_active is not None:
-                if is_active:
+                if is_active == "True":
                     queryset = queryset.exclude(
                         actual_return_date__isnull=False
                     )
-                else:
+                elif is_active == "False":
                     queryset = queryset.exclude(
                         actual_return_date__isnull=True
                     )
 
+            if current_user.is_staff:
+                user_id = self.request.query_params.get("user_id")
+            else:
+                user_id = current_user.id
+
+            if user_id:
+                queryset = queryset.filter(user_id=user_id)
+
         return queryset
 
-    def create(self, request, *args, **kwargs) -> Response:
-        user = request.user
-        book_id = int(request.data.get("book"))
-        expected_return_date = request.data.get("expected_return_date")
+    def perform_create(self, serializer) -> None:
+        user = self.request.user
+        book_id = int(self.request.data.get("book"))
 
         if not book_id or book_id < 1:
             raise ValidationError({"message": "Choose a valid book"})
-
         book = Book.objects.get(id=book_id)
-        Borrowing.validate_borrowing(
-            book=book, exception_to_raise=ValidationError
-        )
-        data = {
-            "user": user.id,
-            "book": book_id,
-            "expected_return_date": expected_return_date,
-        }
+        serializer.save(user=user, book=book)
 
-        with transaction.atomic():
-            serializer = self.get_serializer(data=data)
-            serializer.is_valid(raise_exception=True)
-            book.inventory -= 1
-            book.save()
-            serializer.validated_data["user"] = user
-            self.perform_create(serializer)
-            headers = self.get_success_headers(serializer.data)
+    @action(
+        methods=["POST"],
+        detail=True,
+        url_path="borrowing-return",
+        permission_classes=(IsAuthenticated,),
+    )
+    def borrowing_return(self, request, pk: int = None) -> Response:
+        borrowing = self.get_object()
 
-        return Response(
-            serializer.data, status=status.HTTP_201_CREATED, headers=headers
+        if borrowing.actual_return_date is not None:
+            raise ValidationError(
+                {"message": "This borrowing already returned"}
+            )
+
+        if borrowing.user != self.request.user:
+            raise ValidationError(
+                {"message": "You can not return someone else's borrowings"}
+            )
+
+        serializer = self.get_serializer(
+            instance=borrowing, data=request.data, partial=True
         )
+
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
