@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/4.2/ref/settings/
 """
 import os
+from datetime import timedelta
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -44,6 +45,7 @@ INSTALLED_APPS = [
     "rest_framework_simplejwt",
     "book",
     "user",
+    "borrowings",
 ]
 
 MIDDLEWARE = [
@@ -141,4 +143,12 @@ REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",
     )
+}
+
+SIMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=300),  # default = 5
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),  # default = 1
+    "ROTATE_REFRESH_TOKENS": (
+        True
+    ),  # refresh token endpoint returning not only access tokens but refresh token as well
 }
