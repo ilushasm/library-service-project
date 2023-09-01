@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from django.db import transaction
 from rest_framework import serializers
@@ -15,7 +15,19 @@ class BorrowingSerializer(serializers.ModelSerializer):
         Borrowing.validate_borrowing(
             book=book, exception_to_raise=ValidationError
         )
-        return data
+        expected_return_date = attrs.get("expected_return_date")
+        current_date = datetime.today().date()
+        if expected_return_date is not None:
+            if not expected_return_date <= current_date:
+                return data
+        raise ValidationError(
+            {
+                "expected_return_date": (
+                    "Expected return date must be at least"
+                    f" {current_date + timedelta(days=1)}"
+                )
+            }
+        )
 
     def create(self, validated_data) -> Borrowing:
         book = validated_data["book"]
